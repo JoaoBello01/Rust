@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs::{self};
 use std::io::{self, Write};
 use std::process;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use chrono::{NaiveDate, Datelike};
-use std::sync::{Arc, Mutex};
 use regex::Regex;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -17,24 +18,39 @@ pub enum UserRole {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct User {
-    cpf: String, 
+    cpf: String,
     full_name: String,
     email: String,
     birth: NaiveDate,
     role: UserRole,
 }
 
-type UserDatabase = Arc<Mutex<HashMap<String, User>>>; 
+type UserDatabase = Arc<Mutex<HashMap<String, User>>>;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    
     let db: UserDatabase = Arc::new(Mutex::new(HashMap::new()));
+    load_users_from_file(&db)?;
 
     loop {
-        
         display_menu(&db).await?;
     }
+}
+
+fn load_users_from_file(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
+    if let Ok(file_content) = fs::read_to_string("users_data.txt") {
+        let users: HashMap<String, User> = serde_json::from_str(&file_content)?;
+        let mut db = db.lock().unwrap();
+        *db = users;
+    }
+    Ok(())
+}
+
+fn save_users_to_file(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
+    let db = db.lock().unwrap();
+    let file_content = serde_json::to_string(&*db)?;
+    fs::write("users_data.txt", file_content)?;
+    Ok(())
 }
 
 async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
@@ -48,43 +64,43 @@ async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
 
     let mut choice = String::new();
     print!("Escolha uma opção: ");
-    io::stdout().flush()?; 
+    io::stdout().flush()?;
     io::stdin().read_line(&mut choice)?;
 
     match choice.trim() {
         "1" => {
-            let user = input_user()?; 
+            let user = input_user()?;
             let response = set_user(db, &user).await?;
             println!("Usuário criado com CPF: {:?}", response.cpf);
+            save_users_to_file(db)?;
         }
-
         "2" => {
-            let cpf = input_cpf()?; 
+            let cpf = input_cpf()?;
             if let Ok(user) = get_user(db, &cpf).await {
                 println!("Usuário encontrado: {:?}", user);
-                let updated_user = input_user()?; 
+                let updated_user = input_user()?;
                 let response = update_user(db, &cpf, &updated_user).await?;
                 println!("Usuário atualizado: {:?}", response);
+                save_users_to_file(db)?;
             } else {
                 println!("Usuário não encontrado!");
             }
         }
-
         "3" => {
-            let user = input_user()?; 
+            let user = input_user()?;
             let response = set_user(db, &user).await?;
             println!("Usuário criado com CPF: {:?}", response.cpf);
+            save_users_to_file(db)?;
         }
-
         "4" => {
-            let cpf = input_cpf()?; 
+            let cpf = input_cpf()?;
             if delete_user(db, &cpf).await.is_ok() {
                 println!("Usuário excluído!");
+                save_users_to_file(db)?;
             } else {
                 println!("Usuário não encontrado para exclusão!");
             }
         }
-
         "5" => {
             let users = get_users(db).await?;
             if users.is_empty() {
@@ -96,7 +112,6 @@ async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-
         "6" => {
             println!("Saindo...");
             process::exit(0);
@@ -151,15 +166,15 @@ fn input_user() -> Result<User, Box<dyn Error>> {
         return Err("O email deve ter entre 15 e 50 caracteres!".into());
     }
 
-    print!("Data de nascimento (YYYY-MM-DD): ");
+    print!("Data de nascimento (DD-MM-YYYY): ");
     io::stdout().flush()?;
     io::stdin().read_line(&mut birth)?;
 
-    let birth_date = NaiveDate::parse_from_str(birth.trim(), "%Y-%m-%d");
+    let birth_date = NaiveDate::parse_from_str(birth.trim(), "%d-%m-%Y");
     match birth_date {
         Ok(date) => {
-            if date.year() < 1909 {
-                return Err("O ano deve ser maior ou igual a 1909!".into());
+            if date.year() < 1909 || date.year() > 2024 {
+                return Err("O ano deve ser maior que 1909 e menor que 2024!".into());
             }
             if date.month() < 1 || date.month() > 12 {
                 return Err("O mês deve estar entre 1 e 12!".into());
@@ -168,7 +183,7 @@ fn input_user() -> Result<User, Box<dyn Error>> {
                 return Err("O dia deve estar entre 1 e 31!".into());
             }
         }
-        Err(_) => return Err("Data inválida! Use o formato YYYY-MM-DD.".into()),
+        Err(_) => return Err("Data inválida! Use o formato DD-MM-YYYY.".into()),
     }
 
     print!("Cargo (Admin/User/Guest): ");
@@ -199,12 +214,10 @@ fn input_cpf() -> Result<String, Box<dyn Error>> {
     Ok(cpf.trim().to_string())
 }
 
-
 fn calculate_age(birth_date: &NaiveDate) -> u32 {
     let today = chrono::Local::now().naive_utc().date();
     let mut age = today.year() - birth_date.year();
 
- 
     if (today.month() < birth_date.month())
         || (today.month() == birth_date.month() && today.day() < birth_date.day()) {
         age -= 1;
@@ -212,7 +225,6 @@ fn calculate_age(birth_date: &NaiveDate) -> u32 {
 
     age as u32
 }
-
 
 async fn set_user(db: &UserDatabase, user: &User) -> Result<User, Box<dyn Error>> {
     let mut db = db.lock().unwrap();
@@ -226,12 +238,10 @@ async fn set_user(db: &UserDatabase, user: &User) -> Result<User, Box<dyn Error>
     Ok(user.clone())
 }
 
-
 async fn get_users(db: &UserDatabase) -> Result<HashMap<String, User>, Box<dyn Error>> {
     let db = db.lock().unwrap();
     Ok(db.clone())
 }
-
 
 async fn get_user(db: &UserDatabase, cpf: &str) -> Result<User, Box<dyn Error>> {
     let db = db.lock().unwrap();
@@ -247,13 +257,8 @@ async fn update_user(db: &UserDatabase, cpf: &str, new_user: &User) -> Result<Us
 
     if let Some(user) = db.get_mut(cpf) {
         if new_user.cpf != user.cpf {
-            return Err("Não é permitido modificar o CPF do usuário!".into());
+            return Err("O CPF não pode ser alterado!".into());
         }
-
-        if new_user.birth != user.birth {
-            return Err("Não é permitido modificar a data de nascimento do usuário!".into());
-        }
-
         *user = new_user.clone();
         Ok(user.clone())
     } else {
@@ -270,4 +275,3 @@ async fn delete_user(db: &UserDatabase, cpf: &str) -> Result<(), Box<dyn Error>>
         Ok(())
     }
 }
-

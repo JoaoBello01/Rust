@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use chrono::{NaiveDate, Datelike};
 use regex::Regex;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum UserRole {
     Admin,
     User,
     Guest,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct User {
     cpf: String,
     full_name: String,
@@ -57,10 +57,9 @@ async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
     println!("Menu:");
     println!("1. Adicionar um novo usuário");
     println!("2. Atualizar um usuário existente");
-    println!("3. Criar um novo usuário");
-    println!("4. Deletar um usuário");
-    println!("5. Mostrar todos os usuários");
-    println!("6. Sair");
+    println!("3. Deletar um usuário");
+    println!("4. Mostrar todos os usuários");
+    println!("5. Sair");
 
     let mut choice = String::new();
     print!("Escolha uma opção: ");
@@ -87,12 +86,6 @@ async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
             }
         }
         "3" => {
-            let user = input_user()?;
-            let response = set_user(db, &user).await?;
-            println!("Usuário criado com CPF: {:?}", response.cpf);
-            save_users_to_file(db)?;
-        }
-        "4" => {
             let cpf = input_cpf()?;
             if delete_user(db, &cpf).await.is_ok() {
                 println!("Usuário excluído!");
@@ -101,18 +94,23 @@ async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
                 println!("Usuário não encontrado para exclusão!");
             }
         }
-        "5" => {
+        "4" => {
             let users = get_users(db).await?;
             if users.is_empty() {
                 println!("Nenhum usuário encontrado!");
             } else {
                 println!("Todos os usuários:");
                 for (cpf, user) in users {
-                    println!("CPF: {}, Usuário: {:?}, Idade: {}", cpf, user, calculate_age(&user.birth));
+                    println!(
+                        "CPF: {}, Usuário: {:?}, Idade: {}",
+                        cpf,
+                        user,
+                        calculate_age(&user.birth)
+                    );
                 }
             }
         }
-        "6" => {
+        "5" => {
             println!("Saindo...");
             process::exit(0);
         }
@@ -125,86 +123,87 @@ async fn display_menu(db: &UserDatabase) -> Result<(), Box<dyn Error>> {
 }
 
 fn input_user() -> Result<User, Box<dyn Error>> {
-    let mut cpf = String::new();
-    let mut full_name = String::new();
-    let mut email = String::new();
-    let mut birth = String::new();
-    let mut role = String::new();
+    let cpf = loop {
+        let mut cpf = String::new();
+        print!("CPF (11 dígitos numéricos): ");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut cpf)?;
 
-    print!("CPF (11 dígitos numéricos): ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut cpf)?;
-
-    let cpf = cpf.trim().to_string();
-    if !Regex::new(r"^\d{11}$").unwrap().is_match(&cpf) {
-        return Err("O CPF deve conter apenas 11 dígitos numéricos!".into());
-    }
-
-    print!("Nome completo (mínimo 10, máximo 100 caracteres): ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut full_name)?;
-
-    let full_name = full_name.trim().to_string();
-    if full_name.len() < 10 || full_name.len() > 100 {
-        return Err("O nome completo deve ter entre 10 e 100 caracteres!".into());
-    }
-
-    print!("Email: ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut email)?;
-
-    let email = email.trim().to_string();
-    if email.contains(' ') {
-        return Err("O email não pode conter espaços!".into());
-    }
-
-    let email_regex = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(com|br)$").unwrap();
-    if !email_regex.is_match(&email) {
-        return Err("O email deve terminar com .com ou .br!".into());
-    }
-    if email.len() < 15 || email.len() > 50 {
-        return Err("O email deve ter entre 15 e 50 caracteres!".into());
-    }
-
-    print!("Data de nascimento (DD-MM-YYYY): ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut birth)?;
-
-    let birth_date = NaiveDate::parse_from_str(birth.trim(), "%d-%m-%Y");
-    match birth_date {
-        Ok(date) => {
-            if date.year() < 1909 || date.year() > 2024 {
-                return Err("O ano deve ser maior que 1909 e menor que 2024!".into());
-            }
-            if date.month() < 1 || date.month() > 12 {
-                return Err("O mês deve estar entre 1 e 12!".into());
-            }
-            if date.day() < 1 || date.day() > 31 {
-                return Err("O dia deve estar entre 1 e 31!".into());
-            }
+        let cpf = cpf.trim().to_string();
+        if Regex::new(r"^\d{11}$").unwrap().is_match(&cpf) {
+            break cpf;
+        } else {
+            println!("O CPF deve conter apenas 11 dígitos numéricos! Tente novamente.");
         }
-        Err(_) => return Err("Data inválida! Use o formato DD-MM-YYYY.".into()),
-    }
+    };
 
-    print!("Cargo (Admin/User/Guest): ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut role)?;
+    let full_name = loop {
+        let mut full_name = String::new();
+        print!("Nome completo (mínimo 10, máximo 100 caracteres): ");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut full_name)?;
 
-    let role = match role.trim().to_lowercase().as_str() {
-        "admin" => UserRole::Admin,
-        "user" => UserRole::User,
-        "guest" => UserRole::Guest,
-        _ => return Err("Cargo inválido!".into()),
+        let full_name = full_name.trim().to_string();
+        if full_name.len() >= 10 && full_name.len() <= 100 {
+            break full_name;
+        } else {
+            println!("O nome completo deve ter entre 10 e 100 caracteres! Tente novamente.");
+        }
+    };
+
+    let email = loop {
+        let mut email = String::new();
+        print!("Email: ");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut email)?;
+
+        let email = email.trim().to_string();
+        if !email.contains(' ')
+            && Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(com|br)$").unwrap().is_match(&email)
+            && email.len() >= 15
+            && email.len() <= 50
+        {
+            break email;
+        } else {
+            println!("O email deve ser válido, sem espaços, terminar com .com ou .br, e ter entre 15 e 50 caracteres! Tente novamente.");
+        }
+    };
+
+    let birth = loop {
+        let mut birth = String::new();
+        print!("Data de nascimento (DD-MM-YYYY): ");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut birth)?;
+
+        match NaiveDate::parse_from_str(birth.trim(), "%d-%m-%Y") {
+            Ok(date) if date.year() >= 1909 && date.year() <= 2024 => break date,
+            _ => println!("Data inválida! Use o formato DD-MM-YYYY e verifique o ano. Tente novamente."),
+        }
+    };
+
+    let role = loop {
+        let mut role = String::new();
+        print!("Cargo (Admin/User/Guest): ");
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut role)?;
+
+        match role.trim().to_lowercase().as_str() {
+            "admin" => break UserRole::Admin,
+            "user" => break UserRole::User,
+            "guest" => break UserRole::Guest,
+            _ => println!("Cargo inválido! Escolha entre Admin, User ou Guest. Tente novamente."),
+        }
     };
 
     Ok(User {
         cpf,
         full_name,
         email,
-        birth: birth_date.unwrap(),
+        birth,
         role,
     })
 }
+
 
 fn input_cpf() -> Result<String, Box<dyn Error>> {
     let mut cpf = String::new();
@@ -256,9 +255,6 @@ async fn update_user(db: &UserDatabase, cpf: &str, new_user: &User) -> Result<Us
     let mut db = db.lock().unwrap();
 
     if let Some(user) = db.get_mut(cpf) {
-        if new_user.cpf != user.cpf {
-            return Err("O CPF não pode ser alterado!".into());
-        }
         *user = new_user.clone();
         Ok(user.clone())
     } else {
@@ -273,5 +269,113 @@ async fn delete_user(db: &UserDatabase, cpf: &str) -> Result<(), Box<dyn Error>>
         Err("Usuário não encontrado!".into())
     } else {
         Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use chrono::NaiveDate;
+
+    fn mock_database() -> UserDatabase {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
+    fn mock_user(cpf: &str) -> User {
+        User {
+            cpf: cpf.to_string(),
+            full_name: "Test User".to_string(),
+            email: "testuser@example.com".to_string(),
+            birth: NaiveDate::from_ymd_opt(1995, 5, 15)
+            .expect("Data inválida fornecida para 'birth'"),
+            role: UserRole::User,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_set_user_success() {
+        let db = mock_database();
+        let user = mock_user("12345678901");
+        
+        let result = set_user(&db, &user).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().cpf, "12345678901");
+    }
+
+    #[tokio::test]
+    async fn test_set_user_duplicate_cpf() {
+        let db = mock_database();
+        let user = mock_user("12345678901");
+        let _ = set_user(&db, &user).await; 
+        
+        let duplicate_result = set_user(&db, &user).await; 
+        assert!(duplicate_result.is_err());
+        assert_eq!(
+            duplicate_result.unwrap_err().to_string(),
+            "CPF já cadastrado!"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_user_success() {
+        let db = mock_database();
+        let user = mock_user("12345678901");
+        let _ = set_user(&db, &user).await;
+
+        let fetched_user = get_user(&db, "12345678901").await;
+        assert!(fetched_user.is_ok());
+        assert_eq!(fetched_user.unwrap().cpf, "12345678901");
+    }
+
+    #[tokio::test]
+    async fn test_get_user_not_found() {
+        let db = mock_database();
+        let fetched_user = get_user(&db, "99999999999").await;
+        assert!(fetched_user.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_success() {
+        let db = mock_database();
+        let user = mock_user("12345678901");
+        let _ = set_user(&db, &user).await;
+
+        let delete_result = delete_user(&db, "12345678901").await;
+        assert!(delete_result.is_ok());
+
+        let fetch_result = get_user(&db, "12345678901").await;
+        assert!(fetch_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_user_success() {
+        let db = mock_database();
+        let user = mock_user("12345678901");
+        let _ = set_user(&db, &user).await;
+
+        // Cria o usuário atualizado
+        let updated_user = User {
+            cpf: "12345678901".to_string(),
+            full_name: "Updated User".to_string(),
+            email: "updateduser@example.com".to_string(),
+            birth: NaiveDate::from_ymd_opt(1995, 5, 15)
+                .expect("Data inválida fornecida para 'birth'"),
+            role: UserRole::Admin,
+        };
+
+        let update_result = update_user(&db, "12345678901", &updated_user).await;
+        assert!(update_result.is_ok());
+
+        // Verifica se o usuário foi atualizado
+        let fetched_user = get_user(&db, "12345678901").await;
+        assert!(fetched_user.is_ok());
+        let fetched_user = fetched_user.unwrap();
+        
+        assert_eq!(fetched_user.cpf, "12345678901");
+        assert_eq!(fetched_user.full_name, "Updated User");
+        assert_eq!(fetched_user.email, "updateduser@example.com");
+        assert_eq!(fetched_user.role, UserRole::Admin);
     }
 }
